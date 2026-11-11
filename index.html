@@ -11770,6 +11770,8 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   'use strict';
   const U = OC.util, M = OC.model, R = OC.rendicion;
 
+  // La foto es un texto (data URL). OC.imagen.comprimir devuelve un objeto {dataUrl, …}: se toma su dataUrl.
+  const fotoTexto = (v) => (typeof v === 'string' ? v : (v && typeof v.dataUrl === 'string' ? v.dataUrl : null));
   const VISTAS = ['perfil', 'inicio', 'gasto', 'escaner', 'editor', 'rendiciones', 'ajustes'];
   const TIPOS = [['FACTURA', 'Factura'], ['BOLETA', 'Boleta'], ['RECIBO', 'Recibo'], ['TICKET', 'Ticket'], ['OTRO', 'Otro']];
   const MSG_PAGADO = 'Indica si pagaste con caja o de tu bolsillo.';
@@ -11796,7 +11798,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     const $ = (s) => doc.querySelector(s);
     const ahoraIso = () => (deps.ahora ? deps.ahora() : new Date().toISOString());
     const hoy = () => (deps.ahora ? deps.ahora().slice(0, 10) : new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10));
-    const comprimir = deps.comprimir || ((f, l, q) => OC.imagen.comprimir(f, l, q));
+    const comprimir = deps.comprimir || ((f, l, q) => OC.imagen.comprimir(f, l, q).then(fotoTexto));
     const decodificarQR = deps.decodificarQR || ((f) => OC.imagen.decodificarQR(f));
     // Escáner en vivo: la cámara solo se puede abrir en https/localhost (contexto seguro).
     const nav0 = win.navigator;
@@ -12156,10 +12158,10 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       formGasto.querySelectorAll('input[name="eg-pagado"]').forEach((r) => { r.checked = !!g && r.value === g.pagadoCon; });
       bBorrar.hidden = !g;
       if (g && g.comprobante.fotoId && store.leerFoto) {
-        store.leerFoto(g.comprobante.fotoId).then((u) => { if (u && editando === g) { gPrevia.src = u; gPrevia.hidden = false; } });
+        store.leerFoto(g.comprobante.fotoId).then((u0) => { const u = fotoTexto(u0); if (u && editando === g) { gPrevia.src = u; gPrevia.hidden = false; } });
       }
       if (g && g.comprobante.fotoExtraId && store.leerFoto) {
-        store.leerFoto(g.comprobante.fotoExtraId).then((u) => { if (u && editando === g && !fotoExtraArchivo) { gPreviaExtra.src = u; gPreviaExtra.hidden = false; } });
+        store.leerFoto(g.comprobante.fotoExtraId).then((u0) => { const u = fotoTexto(u0); if (u && editando === g && !fotoExtraArchivo) { gPreviaExtra.src = u; gPreviaExtra.hidden = false; } });
       }
       mostrarVista('gasto');
     }
@@ -12466,7 +12468,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       if (cap.foto) {
         let ok = false, motivo = MSG_FOTO;
         try {
-          const url = await comprimir(cap.foto, 1280, 0.6);
+          const url = fotoTexto(await comprimir(cap.foto, 1280, 0.6));
           const r = await store.guardarFoto(g.id, url);
           if (r && r.ok) { g.comprobante.fotoId = g.id; guardadas.push(g.id); ok = true; }
           else motivo = 'No se pudo guardar la foto del comprobante: ' + String((r && r.error) || '') + '.';
@@ -12477,7 +12479,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       if (cap.fotoExtra) {
         let ok = false, motivo = MSG_FOTO_EXTRA;
         try {
-          const url = await comprimir(cap.fotoExtra, 1280, 0.6);
+          const url = fotoTexto(await comprimir(cap.fotoExtra, 1280, 0.6));
           const r = await store.guardarFoto(g.id + '-x', url);
           if (r && r.ok) { g.comprobante.fotoExtraId = g.id + '-x'; guardadas.push(g.id + '-x'); ok = true; }
           else motivo = 'No se pudo guardar la foto del producto o servicio: ' + String((r && r.error) || '') + '.';
@@ -12522,7 +12524,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       for (const g of gastos) {
         for (const id of [g.comprobante && g.comprobante.fotoId, g.comprobante && g.comprobante.fotoExtraId]) {
           if (!id || !store.leerFoto) continue;
-          try { const u = await store.leerFoto(id); if (u) fotos[id] = u; } catch (e) { /* esa foto se omite */ }
+          try { const u = fotoTexto(await store.leerFoto(id)); if (u) fotos[id] = u; } catch (e) { /* esa foto se omite */ }
         }
       }
       return OC.share.exportarRendicion(r, gastos, fotos);
