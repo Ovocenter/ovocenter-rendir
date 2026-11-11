@@ -146,9 +146,16 @@ fieldset.campo { border: 0; padding: 0; margin: 0 0 var(--s4); }
 .check { display: flex; align-items: center; gap: var(--s3); min-height: 48px; font-weight: 600; }
 .vista-previa { display: block; width: 100%; max-height: 260px; object-fit: contain; border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface-2); }
 
-/* ===== Editar imagen (encuadrar y girar la foto del comprobante) ===== */
-.ed-caja { position: relative; width: 100%; background: #000; border-radius: var(--radius-lg); overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; }
-.ed-img { display: block; width: 100%; height: auto; max-height: 62vh; object-fit: contain; pointer-events: none; }
+/* ===== Editar imagen: pantalla propia (sin barra de pestañas) ===== */
+body.modo-editor .principal { padding-bottom: var(--s5); }
+body.modo-editor #avisos { padding-top: var(--s2); }
+#v-editor.activa { display: flex; flex-direction: column; gap: var(--s3); min-height: calc(100vh - 2 * var(--s4)); }
+.ed-top { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; justify-content: space-between; gap: var(--s2); padding: var(--s2) 0; background: var(--bg); }
+.ed-top h2 { font-size: var(--fs-lg); text-align: center; flex: 1; }
+.ed-top .btn { min-width: 110px; }
+.ed-ayuda { margin: 0; }
+.ed-caja { position: relative; width: 100%; flex: 1 1 auto; display: flex; align-items: center; justify-content: center; background: #000; border-radius: var(--radius-lg); overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; }
+.ed-img { display: block; width: 100%; height: auto; max-height: calc(100vh - 290px); object-fit: contain; pointer-events: none; }
 .ed-marco { position: absolute; border: 2px dashed #fff; box-shadow: 0 0 0 100vmax rgb(0 0 0 / .45); cursor: move; }
 .ed-marco[hidden] { display: none; }
 .ed-esq { position: absolute; width: 28px; height: 28px; background: var(--primary); border: 3px solid #fff; border-radius: 50%; }
@@ -11430,13 +11437,28 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       if (txt.length > MAX_TEXTO) throw new Error('«' + corto(it.id) + '»: el texto pasa de ' + MAX_TEXTO + ' caracteres');
       items.push({ id: it.id, titulo, texto: txt });
     }
-    return { version: p.version, actualizadaEn: p.actualizadaEn, fotoAdicional: p.fotoAdicional, items };
+    const out = { version: p.version, actualizadaEn: p.actualizadaEn, fotoAdicional: p.fotoAdicional, items };
+    // Proveedores conocidos por Administración (opcional): RUC válido y nombre; sin duplicados por RUC.
+    if (p.proveedores !== undefined) {
+      if (!Array.isArray(p.proveedores)) throw new Error('la lista de proveedores no es válida');
+      const vistos = new Set(), provs = [];
+      for (const pr of p.proveedores) {
+        if (!esObj(pr) || typeof pr.ruc !== 'string' || !OC.util.rucValido(pr.ruc)) throw new Error('un proveedor tiene un RUC no válido');
+        if (typeof pr.nombre !== 'string' || !pr.nombre.trim() || pr.nombre.trim().length > 120) throw new Error('un proveedor no tiene nombre válido (máximo 120 caracteres)');
+        if (vistos.has(pr.ruc)) continue;
+        vistos.add(pr.ruc);
+        provs.push({ ruc: pr.ruc, nombre: pr.nombre.trim() });
+      }
+      out.proveedores = provs;
+    }
+    return out;
   }
 
   function exportarPoliticas(p) {
     const o = esObj(p) ? p : {};
     const limpio = { version: o.version, actualizadaEn: o.actualizadaEn, fotoAdicional: o.fotoAdicional,
       items: arr(o.items).filter(esObj).map((it) => ({ id: it.id, titulo: it.titulo, texto: it.texto })) };
+    if (Array.isArray(o.proveedores)) limpio.proveedores = o.proveedores.filter(esObj).map((pr) => ({ ruc: pr.ruc, nombre: pr.nombre }));
     return JSON.stringify({ app: APP, tipo: 'politicas', version: VERSION_POLITICAS, exportadoEn: new Date().toISOString(), politicas: limpio });
   }
 
@@ -11929,7 +11951,9 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       doc.querySelectorAll('.vista').forEach((v) => v.classList.toggle('activa', v.id === 'v-' + nombre));
       const tab = nombre === 'gasto' || nombre === 'escaner' || nombre === 'editor' ? 'inicio' : nombre;
       doc.querySelectorAll('nav.tabs a[data-vista]').forEach((a) => { if (a.dataset.vista === tab) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
-      $('nav.tabs').hidden = !perfil;
+      // Editar imagen es una pantalla propia: sin barra de pestañas y con Cancelar/Guardar arriba.
+      doc.body.classList.toggle('modo-editor', nombre === 'editor');
+      $('nav.tabs').hidden = !perfil || nombre === 'editor';
       if (nombre === 'inicio') pintarInicio();
       if (nombre === 'rendiciones') pintarHistorial();
       if (nombre === 'ajustes') pintarAjustes();
@@ -12161,6 +12185,20 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
         llenarDesdeQR(q, 'foto');
       });
     }
+    // Proveedores conocidos: el QR trae el RUC; el nombre se recuerda la primera vez y no se cambia después.
+    function recordarProveedor(p) {
+      if (!p || !U.rucValido(p.ruc || '') || !(p.nombre || '').trim()) return 0;
+      return mezclarProveedores([{ ruc: p.ruc, nombre: p.nombre.trim() }]);
+    }
+    // Agrega a la lista del celular los proveedores que no tiene (por RUC). Devuelve cuántos agregó.
+    function mezclarProveedores(lista) {
+      const cat = estado.catalogos, actuales = cat.proveedores || [], nuevos = [];
+      for (const p of lista) {
+        if (!actuales.some((x) => x.ruc === p.ruc) && !nuevos.some((x) => x.ruc === p.ruc)) nuevos.push({ ruc: p.ruc, nombre: p.nombre });
+      }
+      if (nuevos.length) estado.catalogos = Object.assign({}, cat, { proveedores: actuales.concat(nuevos) });
+      return nuevos.length;
+    }
     // Llena el formulario con los datos del QR SUNAT (foto o escáner en vivo). No guarda nada.
     function llenarDesdeQR(q, origen) {
       leidoQR = true; origenQR = origen || null;
@@ -12186,12 +12224,11 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     const bEdRest = h('button', { class: 'btn', type: 'button', id: 'ed-restablecer', text: 'Restablecer' });
     const bEdVista = h('button', { class: 'btn', type: 'button', id: 'ed-previsualizar', text: 'Previsualizar' });
     const bEdCancelar = h('button', { class: 'btn', type: 'button', id: 'ed-cancelar', text: 'Cancelar' });
-    const bEdGuardar = h('button', { class: 'btn btn-primario btn-grande', type: 'button', id: 'ed-guardar', text: 'Guardar' });
-    vEditor.appendChild(h('header', { class: 'vista-cab' }, h('h2', { text: 'Editar imagen' })));
-    vEditor.appendChild(h('p', { class: 'muted', text: 'Arrastra las esquinas para dejar solo el comprobante.' }));
+    const bEdGuardar = h('button', { class: 'btn btn-primario', type: 'button', id: 'ed-guardar', text: 'Guardar' });
+    vEditor.appendChild(h('div', { class: 'ed-top' }, bEdCancelar, h('h2', { text: 'Editar imagen' }), bEdGuardar));
+    vEditor.appendChild(h('p', { class: 'muted ed-ayuda', text: 'Arrastra las esquinas para dejar solo el comprobante.' }));
     vEditor.appendChild(edCaja);
     vEditor.appendChild(h('div', { class: 'ed-herr' }, bEdIzq, bEdDer, bEdRest, bEdVista));
-    vEditor.appendChild(h('div', { class: 'acciones fila' }, bEdCancelar, bEdGuardar));
 
     let ed = null;   // { img, est, url, alGuardar, alCancelar, cb, vista }
     // Foto completa girada (sin recortar), para mostrarla mientras se encuadra.
@@ -12459,6 +12496,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       if (!r.gastoIds.includes(g.id)) r.gastoIds.push(g.id);
       r.modificadoEn = ahoraIso();
       editando = g;   // si falla el guardado, un nuevo intento actualiza este mismo gasto
+      recordarProveedor(g.proveedor);
       if (await persistir()) { editando = null; fotoArchivo = null; fotoExtraArchivo = null; aviso('ok', 'Gasto guardado.', 'ok'); mostrarVista('inicio'); }
     }
 
@@ -12595,12 +12633,13 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
         try { const fr = new win.FileReader(); fr.onload = () => res(String(fr.result || '')); fr.onerror = () => rej(fr.error || new Error('lectura')); fr.readAsText(f); } catch (e) { rej(e); }
       });
     }
-    function aplicarPoliticas(datos) {
+    function aplicarPoliticas(datos, extra) {
       if (store.setAjuste('politicas', datos) === false) { aviso('error', 'No se pudieron guardar las políticas en este celular.', 'politicas'); return; }
       politicas = datos;
       pintarPoliticas();
-      aviso('ok', 'Políticas actualizadas (versión ' + datos.version + ').', 'politicas');
+      aviso('ok', 'Políticas actualizadas (versión ' + datos.version + ').' + (extra || ''), 'politicas');
     }
+    const textoProveedores = (n) => (n ? ' Se agregaron ' + n + (n === 1 ? ' proveedor' : ' proveedores') + '.' : '');
     aPolArchivo.addEventListener('change', () => {
       const f = aPolArchivo.files && aPolArchivo.files[0];
       if (!f) return;
@@ -12612,13 +12651,16 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
         try { aPolArchivo.value = ''; } catch (e) { /* ignorar */ }
         const r = OC.share.leerPoliticas(txt);
         if (!r.ok) { aviso('error', r.error, 'politicas'); return; }
+        const nProv = mezclarProveedores(r.datos.proveedores || []);
+        if (nProv) await persistir();
+        const extra = textoProveedores(nProv);
         const actual = politicas ? politicas.version : 0;
-        if (r.datos.version === actual) { aviso('info', 'Ya tienes esta versión de las políticas (' + actual + ').', 'politicas'); return; }
+        if (r.datos.version === actual) { aviso('info', 'Ya tienes esta versión de las políticas (' + actual + ').' + extra, 'politicas'); return; }
         if (r.datos.version < actual) {
           modal({ titulo: 'Versión anterior', cuerpo: ['Este archivo es la versión ' + r.datos.version + ' y ya tienes la ' + actual + '. ¿Quieres usar la anterior?'], confirmar: 'Usar la anterior', onConfirmar: () => aplicarPoliticas(r.datos) });
           return;
         }
-        aplicarPoliticas(r.datos);
+        aplicarPoliticas(r.datos, extra);
       });
     });
     function pintarAjustes() {
