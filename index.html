@@ -146,6 +146,13 @@ fieldset.campo { border: 0; padding: 0; margin: 0 0 var(--s4); }
 .check { display: flex; align-items: center; gap: var(--s3); min-height: 48px; font-weight: 600; }
 .vista-previa { display: block; width: 100%; max-height: 260px; object-fit: contain; border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface-2); }
 
+/* ===== Foto del producto o servicio y políticas ===== */
+.extra-foto { display: flex; flex-direction: column; gap: var(--s2); margin: var(--s3) 0; }
+.extra-foto .muted { margin: 0; font-weight: 600; }
+.pol-item { padding: var(--s3) 0; border-top: 1px solid var(--border); }
+.pol-item h3 { font-size: var(--fs); margin-bottom: var(--s1); }
+.pol-item .pol-texto { margin: 0; white-space: pre-wrap; color: var(--text-muted); }
+
 /* ===== Lista de gastos ===== */
 .lista { list-style: none; margin: 0 0 var(--s4); padding: 0; display: flex; flex-direction: column; gap: var(--s2); }
 .lista > li { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: var(--s1) var(--s3); min-height: 64px; padding: var(--s3) var(--s4); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
@@ -10547,7 +10554,8 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       grupo: c.grupo || '',
       categoria: c.categoria || '',
       proveedor: c.proveedor || null,
-      comprobante: { tipo: comp.tipo || '', numero: comp.numero || '', fotoId: comp.fotoId || null },
+      // fotoExtraId: foto del producto o servicio (política de la empresa para los gastos de encargados).
+      comprobante: { tipo: comp.tipo || '', numero: comp.numero || '', fotoId: comp.fotoId || null, fotoExtraId: comp.fotoExtraId || null },
       medioOperacion: c.medioOperacion || '',
       cajaOrigen: c.cajaOrigen || '',
       fuente: c.fuente || 'MANUAL',
@@ -10812,6 +10820,38 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   };
 })(globalThis.OC = globalThis.OC || {});
 
+/* ===== politicas.js ===== */
+/* Módulo politicas: políticas de la empresa (texto editable por administración, leído por los encargados).
+   Forma: { version (entero ≥ 1, sube con cada cambio), actualizadaEn (fecha y hora ISO), fotoAdicional (boolean: true = la foto del producto o servicio es obligatoria),
+            items: [{ id, titulo, texto }] }.
+   El archivo para los encargados se arma y se lee en share.js (exportarPoliticas / leerPoliticas). */
+(function (OC) {
+  'use strict';
+
+  // Valores de fábrica: rigen aunque el encargado no haya importado nunca un archivo de políticas.
+  function defaults() {
+    return {
+      version: 1,
+      actualizadaEn: '2026-11-11T00:00:00.000Z',
+      fotoAdicional: false,
+      items: [
+        { id: 'fotos-gasto', titulo: 'Fotos del gasto',
+          texto: 'La foto del comprobante (boleta, factura o ticket) es obligatoria: sin ella no se puede guardar el gasto. La foto del producto o servicio comprado (mercadería, combustible, trabajo realizado) es opcional, pero ayuda a la revisión.' },
+        { id: 'rendir-gastos', titulo: 'Rinde cada gasto con su comprobante',
+          texto: 'Todo gasto se rinde con su comprobante (boleta, factura o ticket). Envía tu rendición a administración en cuanto la tengas lista.' },
+      ],
+    };
+  }
+
+  // La foto del producto o servicio es opcional salvo que las políticas digan expresamente que se exige.
+  // (La foto del comprobante no depende de las políticas: siempre es obligatoria.)
+  function exigeFotoAdicional(p) {
+    return !!(p && typeof p === 'object' && p.fotoAdicional === true);
+  }
+
+  OC.politicas = { defaults, exigeFotoAdicional };
+})(globalThis.OC = globalThis.OC || {});
+
 /* ===== store.js ===== */
 /* Módulo store: persistencia. Estado y fotos van al adaptador (IndexedDB);
    la clave de API y el contador de lecturas van solo a localStorage (ls). */
@@ -11001,7 +11041,10 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     const o = {};
     for (const k of CAMPOS_GASTO) if (g[k] !== undefined) o[k] = clonar(g[k]);
     if (esObj(g.proveedor)) o.proveedor = { ruc: g.proveedor.ruc, nombre: g.proveedor.nombre };
-    if (esObj(g.comprobante)) o.comprobante = { tipo: g.comprobante.tipo, numero: g.comprobante.numero, fotoId: g.comprobante.fotoId };
+    if (esObj(g.comprobante)) {
+      o.comprobante = { tipo: g.comprobante.tipo, numero: g.comprobante.numero, fotoId: g.comprobante.fotoId };
+      if (g.comprobante.fotoExtraId !== undefined) o.comprobante.fotoExtraId = g.comprobante.fotoExtraId;
+    }
     if (esObj(g.aprobacion)) o.aprobacion = { estado: g.aprobacion.estado, motivo: g.aprobacion.motivo };
     return clonar(o);
   }
@@ -11108,6 +11151,12 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       const f = g.comprobante.fotoId;
       if (f !== undefined && f !== null && (typeof f !== 'string' || !f || PROHIBIDOS.includes(f))) throw new Error('«fotoId» no es válido');
       o.comprobante = { tipo: texto(g.comprobante.tipo, 'comprobante.tipo'), numero: texto(g.comprobante.numero, 'comprobante.numero'), fotoId: f === undefined ? null : f };
+      // Foto del producto o servicio: opcional; un gasto de una versión anterior no la trae.
+      const fx = g.comprobante.fotoExtraId;
+      if (fx !== undefined) {
+        if (fx !== null && (typeof fx !== 'string' || !fx || PROHIBIDOS.includes(fx))) throw new Error('«fotoExtraId» no es válido');
+        o.comprobante.fotoExtraId = fx;
+      }
     }
     return o;
   }
@@ -11165,6 +11214,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     try { o = JSON.parse(texto); } catch (err) { return { ok: false, error: 'El archivo no es un JSON válido.' }; }
     if (!esObj(o) || o.app !== APP) return { ok: false, error: 'El archivo no pertenece a la app de gastos de Ovocenter.' };
     if (o.tipo === 'rendicion') return { ok: false, error: 'Este archivo es una rendición: impórtalo en la vista Rendiciones.' };
+    if (o.tipo === 'politicas') return { ok: false, error: 'Este archivo es de políticas: impórtalo en Ajustes de la app del encargado.' };
     if (o.version !== 1 && o.version !== VERSION) return { ok: false, error: 'El archivo es de otra versión (' + JSON.stringify(o.version) + '); esta app lee la versión ' + VERSION + '.' };
     if (!Array.isArray(o.gastos)) return { ok: false, error: 'El archivo no contiene una lista de gastos.' };
     if (o.catalogos !== undefined && !esObj(o.catalogos)) return { ok: false, error: 'Los catálogos del archivo no son válidos.' };
@@ -11279,8 +11329,9 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     const f = {};
     if (esObj(fotos)) {
       for (const g of gs) {
-        const id = g.comprobante && g.comprobante.fotoId;
-        if (typeof id === 'string' && typeof fotos[id] === 'string') f[id] = fotos[id];
+        for (const id of [g.comprobante && g.comprobante.fotoId, g.comprobante && g.comprobante.fotoExtraId]) {
+          if (typeof id === 'string' && typeof fotos[id] === 'string') f[id] = fotos[id];
+        }
       }
     }
     return JSON.stringify({ app: APP, tipo: 'rendicion', version: VERSION_RENDICION, exportadoEn: new Date().toISOString(),
@@ -11292,6 +11343,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     try { o = JSON.parse(texto); } catch (err) { return { ok: false, error: 'El archivo no es un JSON válido.' }; }
     if (!esObj(o) || o.app !== APP) return { ok: false, error: 'El archivo no pertenece a la app de gastos de Ovocenter.' };
     if (o.tipo === undefined && o.catalogos !== undefined) return { ok: false, error: 'Este es el archivo compartido: impórtalo en Archivo.' };
+    if (o.tipo === 'politicas') return { ok: false, error: 'Este archivo es de políticas: impórtalo en Ajustes de la app del encargado.' };
     if (o.tipo !== 'rendicion') return { ok: false, error: 'El archivo no pertenece a la app de gastos de Ovocenter.' };
     if (o.version !== VERSION_RENDICION) return { ok: false, error: 'La rendición es de otra versión (' + corto(JSON.stringify(o.version)) + '); esta app lee la versión ' + VERSION_RENDICION + '.' };
     let rendicion;
@@ -11341,7 +11393,51 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     } catch (err) { return { ok: false, error: 'No se pudo importar la rendición: ' + err.message }; }
   }
 
-  OC.share = { exportar, leer, fusionar, resolver, validarRendicion, exportarRendicion, leerRendicion, aplicarRendicion };
+  // ---------- archivo de políticas (administración -> encargados) ----------
+  const VERSION_POLITICAS = 1, MAX_POLITICAS = 30, MAX_TITULO = 100, MAX_TEXTO = 2000;
+  // Validación estricta: lanza Error con el motivo. Devuelve solo los campos conocidos y con los textos recortados.
+  function validarPoliticas(p) {
+    if (!esObj(p)) throw new Error('las políticas no tienen la forma esperada');
+    if (!Number.isInteger(p.version) || p.version < 1) throw new Error('«version» debe ser un número entero desde 1');
+    if (typeof p.actualizadaEn !== 'string' || !isFinite(Date.parse(p.actualizadaEn))) throw new Error('«actualizadaEn» no es una fecha y hora válida (' + corto(p.actualizadaEn) + ')');
+    if (typeof p.fotoAdicional !== 'boolean') throw new Error('«fotoAdicional» debe ser verdadero o falso');
+    if (!Array.isArray(p.items)) throw new Error('falta la lista de políticas');
+    if (p.items.length > MAX_POLITICAS) throw new Error('hay más de ' + MAX_POLITICAS + ' políticas');
+    const ids = new Set(), items = [];
+    for (const it of p.items) {
+      if (!esObj(it)) throw new Error('una política no tiene la forma esperada');
+      if (typeof it.id !== 'string' || it.id === '' || PROHIBIDOS.includes(it.id)) throw new Error('una política tiene un identificador no válido');
+      if (ids.has(it.id)) throw new Error('hay un identificador de política repetido');
+      ids.add(it.id);
+      if (typeof it.titulo !== 'string' || typeof it.texto !== 'string') throw new Error('«' + corto(it.id) + '»: el título y el texto deben ser texto');
+      const titulo = it.titulo.trim(), txt = it.texto.trim();
+      if (!titulo) throw new Error('«' + corto(it.id) + '»: falta el título');
+      if (titulo.length > MAX_TITULO) throw new Error('«' + corto(it.id) + '»: el título pasa de ' + MAX_TITULO + ' caracteres');
+      if (txt.length > MAX_TEXTO) throw new Error('«' + corto(it.id) + '»: el texto pasa de ' + MAX_TEXTO + ' caracteres');
+      items.push({ id: it.id, titulo, texto: txt });
+    }
+    return { version: p.version, actualizadaEn: p.actualizadaEn, fotoAdicional: p.fotoAdicional, items };
+  }
+
+  function exportarPoliticas(p) {
+    const o = esObj(p) ? p : {};
+    const limpio = { version: o.version, actualizadaEn: o.actualizadaEn, fotoAdicional: o.fotoAdicional,
+      items: arr(o.items).filter(esObj).map((it) => ({ id: it.id, titulo: it.titulo, texto: it.texto })) };
+    return JSON.stringify({ app: APP, tipo: 'politicas', version: VERSION_POLITICAS, exportadoEn: new Date().toISOString(), politicas: limpio });
+  }
+
+  function leerPoliticas(texto) {
+    let o;
+    try { o = JSON.parse(texto); } catch (err) { return { ok: false, error: 'El archivo no es un JSON válido.' }; }
+    if (!esObj(o) || o.app !== APP) return { ok: false, error: 'El archivo no pertenece a la app de gastos de Ovocenter.' };
+    if (o.tipo !== 'politicas') return { ok: false, error: 'El archivo no es de políticas.' };
+    if (o.version !== VERSION_POLITICAS) return { ok: false, error: 'El archivo de políticas es de otra versión (' + corto(JSON.stringify(o.version)) + '); esta app lee la versión ' + VERSION_POLITICAS + '.' };
+    try { return { ok: true, datos: validarPoliticas(o.politicas) }; }
+    catch (err) { return { ok: false, error: 'Las políticas no son válidas: ' + err.message + '.' }; }
+  }
+
+  OC.share = { exportar, leer, fusionar, resolver, validarRendicion, exportarRendicion, leerRendicion, aplicarRendicion, exportarPoliticas, leerPoliticas };
+
 })(globalThis.OC = globalThis.OC || {});
 
 /* ===== qr.js ===== */
@@ -11550,7 +11646,10 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   const MSG_PAGADO = 'Indica si pagaste con caja o de tu bolsillo.';
   const MSG_QR = 'Datos leídos del QR: revísalos antes de guardar.';
   const MSG_AJUSTES = 'No se pudieron guardar los ajustes en este celular.';
-  const MSG_FOTO = 'No se pudo comprimir la foto; el gasto se guardará sin foto.';
+  const MSG_FOTO = 'No se pudo comprimir la foto del comprobante.';
+  const MSG_FALTA_COMP = 'Falta la foto del comprobante.';
+  const MSG_FALTA_EXTRA = 'Falta la foto del producto o servicio (política de la empresa).';
+  const MSG_FOTO_EXTRA = 'No se pudo comprimir la foto del producto o servicio.';
   const MSG_SIN_ESCANER = 'El escáner en vivo funciona cuando la app está publicada. Por ahora usa «Foto del comprobante».';
   const MSG_QR_AJENO = 'Ese QR no es de un comprobante SUNAT.';
   // Iconos de la lista del botón «+» (trazos SVG fijos, sin datos del usuario).
@@ -11608,6 +11707,9 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     let editando = null;                 // gasto en edición (null = nuevo)
     let fotoArchivo = null;              // foto elegida, sin comprimir ni guardar todavía
     let leidoQR = false;
+    let origenQR = null;                 // 'escaner' si los datos vienen del escáner en vivo: la foto del comprobante no los borra
+    let fotoExtraArchivo = null;         // foto del producto o servicio, sin comprimir ni guardar todavía
+    let politicas = null;                // políticas importadas (null = valores de fábrica)
     let guardando = false;               // evita el doble toque en Guardar
     let enviando = false;                // evita el doble toque en Enviar / Volver a compartir
     let modalActual = null;
@@ -11853,6 +11955,10 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     const gFoto = h('input', { id: 'eg-foto', type: 'file', accept: 'image/*', capture: 'environment', class: 'solo-lector' });
     const gGaleria = h('input', { id: 'eg-galeria', type: 'file', accept: 'image/*', class: 'solo-lector' });
     const gPrevia = h('img', { class: 'vista-previa', alt: 'Foto del comprobante', hidden: true });
+    const gFotoNota = h('p', { id: 'eg-foto-nota', class: 'muted', text: 'La foto del comprobante es obligatoria.' });
+    const gFotoExtra = h('input', { id: 'eg-foto-extra', type: 'file', accept: 'image/*', capture: 'environment', class: 'solo-lector' });
+    const gPreviaExtra = h('img', { id: 'eg-previa-extra', class: 'vista-previa', alt: 'Foto del producto o servicio', hidden: true });
+    const gExtraNota = h('p', { id: 'eg-extra-nota', class: 'muted' });
     const gFecha = h('input', { id: 'eg-fecha', type: 'date', required: true, 'aria-required': 'true' });
     const gImporte = texto('eg-importe', { inputmode: 'decimal', class: 'importe', required: true, 'aria-required': 'true' });
     const gDetalle = texto('eg-detalle'), gRuc = texto('eg-ruc', { inputmode: 'numeric', maxlength: '11' });
@@ -11865,7 +11971,8 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     const bBorrar = h('button', { class: 'btn btn-peligro', type: 'button', id: 'eg-borrar', text: 'Borrar gasto', hidden: true });
     const formGasto = h('form', { id: 'form-gasto', novalidate: true },
       h('label', { class: 'btn btn-grande', for: 'eg-foto' }, 'Tomar foto', gFoto),
-      h('label', { class: 'btn', for: 'eg-galeria' }, 'Elegir de la galería', gGaleria), gPrevia, gTienda,
+      h('label', { class: 'btn', for: 'eg-galeria' }, 'Elegir de la galería', gGaleria), gFotoNota, gPrevia,
+      h('div', { class: 'extra-foto' }, h('label', { class: 'btn btn-grande', for: 'eg-foto-extra' }, 'Foto del producto o servicio', gFotoExtra), gExtraNota, gPreviaExtra), gTienda,
       campo('eg-fecha', 'Fecha', gFecha, true), campo('eg-importe', 'Importe (S/)', gImporte, true),
       h('fieldset', { class: 'campo' }, h('legend', { class: 'req', text: 'Pagado con' }), h('div', { class: 'opciones' }, radio('CAJA', 'Caja'), radio('BOLSILLO', 'Bolsillo'))),
       campo('eg-detalle', 'Detalle', gDetalle), campo('eg-ruc', 'RUC del proveedor', gRuc), campo('eg-proveedor', 'Proveedor', gProv),
@@ -11887,17 +11994,24 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       if (gPrevia.dataset.url && win.URL && win.URL.revokeObjectURL) { try { win.URL.revokeObjectURL(gPrevia.dataset.url); } catch (e) { /* ignorar */ } }
       gPrevia.removeAttribute('src'); gPrevia.removeAttribute('data-url'); gPrevia.hidden = true;
     }
+    function soltarPreviaExtra() {
+      if (gPreviaExtra.dataset.url && win.URL && win.URL.revokeObjectURL) { try { win.URL.revokeObjectURL(gPreviaExtra.dataset.url); } catch (e) { /* ignorar */ } }
+      gPreviaExtra.removeAttribute('src'); gPreviaExtra.removeAttribute('data-url'); gPreviaExtra.hidden = true;
+    }
+    // La foto del producto o servicio es opcional salvo que las políticas la exijan. Un gasto ya guardado se edita sin pedirla.
+    const exigeExtra = () => OC.politicas.exigeFotoAdicional(politicas) && !editando;
+    function pintarExtraNota() { gExtraNota.textContent = OC.politicas.exigeFotoAdicional(politicas) ? 'Obligatoria según la política de la empresa.' : 'Opcional.'; }
     function abrirGasto(g) {
       const rg = g && estado.rendiciones.find((x) => x.id === g.rendicionId);
       if (g && (!rg || rg.estado !== R.ESTADOS.BORRADOR)) { aviso('advertencia', 'Este gasto ya se envió y no se puede editar.', 'form'); return; }
-      editando = g; fotoArchivo = null; leidoQR = false;
-      quitarAviso('form'); quitarAviso('qr-leyendo'); quitarAviso('qr');
+      editando = g; fotoArchivo = null; fotoExtraArchivo = null; leidoQR = false; origenQR = null;
+      quitarAviso('form'); quitarAviso('foto-extra'); quitarAviso('qr-leyendo'); quitarAviso('qr');
       gTitulo.textContent = g ? 'Editar gasto' : 'Nuevo gasto';
       gTienda.textContent = 'Tienda: ' + perfil.tienda;
       llenar(gTipo, TIPOS, '— Sin tipo —');
       llenar(gGrupo, estado.catalogos.grupos.map((x) => x.nombre), '— Elige —');
-      gFoto.value = ''; gGaleria.value = '';
-      soltarPrevia();
+      gFoto.value = ''; gGaleria.value = ''; gFotoExtra.value = '';
+      soltarPrevia(); soltarPreviaExtra(); pintarExtraNota();
       gFecha.value = g ? (g.fechaOperacion || g.fechaExpedicion || hoy()) : hoy();
       gImporte.value = g && g.importe !== null ? String(g.importe) : '';
       gDetalle.value = g ? g.detalle : '';
@@ -11912,6 +12026,9 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       if (g && g.comprobante.fotoId && store.leerFoto) {
         store.leerFoto(g.comprobante.fotoId).then((u) => { if (u && editando === g) { gPrevia.src = u; gPrevia.hidden = false; } });
       }
+      if (g && g.comprobante.fotoExtraId && store.leerFoto) {
+        store.leerFoto(g.comprobante.fotoExtraId).then((u) => { if (u && editando === g && !fotoExtraArchivo) { gPreviaExtra.src = u; gPreviaExtra.hidden = false; } });
+      }
       mostrarVista('gasto');
     }
 
@@ -11919,7 +12036,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     function alElegirFoto(inp) {
       const f = inp.files && inp.files[0];
       if (!f) return;
-      fotoArchivo = f; leidoQR = false;
+      fotoArchivo = f; if (origenQR !== 'escaner') leidoQR = false;
       soltarPrevia();
       try { const u = win.URL.createObjectURL(f); gPrevia.src = u; gPrevia.dataset.url = u; gPrevia.hidden = false; } catch (e) { /* sin vista previa */ }
       aviso('info', 'Leyendo QR de la foto…', 'qr-leyendo');
@@ -11929,13 +12046,13 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
         // Si cambió la foto, el aviso lo maneja la lectura nueva; si se canceló o se está guardando, se quita.
         if (fotoArchivo !== f || guardando) { if (fotoArchivo === f || !fotoArchivo) quitarAviso('qr-leyendo'); return; }
         quitarAviso('qr-leyendo');
-        if (!q) { aviso('advertencia', 'No se pudo leer el QR de la foto. Llena los datos a mano.', 'qr'); return; }
-        llenarDesdeQR(q);
+        if (!q) { if (origenQR !== 'escaner') aviso('advertencia', 'No se pudo leer el QR de la foto. Llena los datos a mano.', 'qr'); return; }
+        llenarDesdeQR(q, 'foto');
       });
     }
     // Llena el formulario con los datos del QR SUNAT (foto o escáner en vivo). No guarda nada.
-    function llenarDesdeQR(q) {
-      leidoQR = true;
+    function llenarDesdeQR(q, origen) {
+      leidoQR = true; origenQR = origen || null;
       gRuc.value = q.ruc; gNumero.value = q.serie + '-' + q.numero; gImporte.value = String(q.importe); gFecha.value = q.fechaExpedicion;
       gTipo.value = TIPOS.some((t) => t[0] === q.tipo) ? q.tipo : '';
       const prov = (estado.catalogos.proveedores || []).find((p) => p.ruc === q.ruc);
@@ -11987,7 +12104,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
         if (id !== escaneoId) return;
         if (t) {
           const q = OC.qr.parsearSunat(t);
-          if (q) { detenerEscaner(); abrirGasto(null); llenarDesdeQR(q); return; }
+          if (q) { detenerEscaner(); abrirGasto(null); llenarDesdeQR(q, 'escaner'); return; }
           if (t !== ajeno) { ajeno = t; aviso('advertencia', MSG_QR_AJENO, 'qr'); }
         }
         await new Promise((r) => win.setTimeout(r, intervaloQR));
@@ -11997,6 +12114,15 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     doc.addEventListener('visibilitychange', () => {
       if (doc.hidden && flujo) mostrarVista('inicio');
     });
+    function alElegirFotoExtra() {
+      const f = gFotoExtra.files && gFotoExtra.files[0];
+      if (!f) return;
+      fotoExtraArchivo = f;
+      soltarPreviaExtra();
+      try { const u = win.URL.createObjectURL(f); gPreviaExtra.src = u; gPreviaExtra.dataset.url = u; gPreviaExtra.hidden = false; } catch (e) { gPreviaExtra.hidden = false; }
+      quitarAviso('form');
+    }
+    gFotoExtra.addEventListener('change', alElegirFotoExtra);
     gFoto.addEventListener('change', () => alElegirFoto(gFoto));
     gGaleria.addEventListener('change', () => alElegirFoto(gGaleria));
 
@@ -12007,7 +12133,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
         fechaExpedicion: gFecha.value, fechaOperacion: gFecha.value || null, tienda: perfil.tienda,
         importe: imp.ok ? imp.valor : null, detalle: gDetalle.value.trim(), grupo: gGrupo.value, categoria: gCategoria.value,
         proveedor: ruc || nombre ? { ruc, nombre } : null,
-        comprobante: { tipo: gTipo.value, numero: gNumero.value.trim(), fotoId: editando ? editando.comprobante.fotoId : null },
+        comprobante: { tipo: gTipo.value, numero: gNumero.value.trim(), fotoId: editando ? editando.comprobante.fotoId : null, fotoExtraId: editando ? editando.comprobante.fotoExtraId || null : null },
         fuente: 'ENCARGADO', lectura: leidoQR ? 'QR' : (editando ? editando.lectura : 'MANUAL'),
         rendicionId: editando ? editando.rendicionId : (borradorActual() || { id: 'pendiente' }).id,
         pagadoCon: pagadoSel(), aprobacion: editando ? editando.aprobacion : null,
@@ -12025,6 +12151,9 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       const errores = imp.ok ? v.errores.slice() : [imp.error];
       if (!U.parseFecha(gFecha.value)) errores.unshift('La fecha es obligatoria.');
       if (!g.pagadoCon) errores.push(MSG_PAGADO);
+      // Foto del comprobante: siempre obligatoria (la nueva o la que el gasto ya tiene).
+      if (!fotoArchivo && !(editando && editando.comprobante.fotoId)) errores.push(MSG_FALTA_COMP);
+      if (exigeExtra() && !fotoExtraArchivo) errores.push(MSG_FALTA_EXTRA);
       if (errores.length) { aviso('error', errores.join(' '), 'form'); return; }
       quitarAviso('form');
       if (v.avisos.length) aviso('advertencia', v.avisos.join(' '), 'form-adv');
@@ -12042,23 +12171,42 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       if (guardando) return;
       guardando = true;
       for (const b of [bGuardar, bCancelar, bBorrar]) b.disabled = true;
-      const cap = { g, foto: fotoArchivo, editando };
+      const cap = { g, foto: fotoArchivo, fotoExtra: fotoExtraArchivo, exigida: exigeExtra(), editando };
       encolar(() => confirmar(cap)).then(() => { guardando = false; for (const b of [bGuardar, bCancelar, bBorrar]) b.disabled = false; });
     }
 
     // Confirmado: recién ahora se comprime y guarda la foto, se agrega a la rendición y se persiste.
     async function confirmar(cap) {
       const g = cap.g;
+      const guardadas = [];   // fotos nuevas de este intento: si el gasto no se guarda, se quitan para no dejar fotos sueltas
+      const soltar = async () => { for (const id of guardadas) { try { if (store.borrarFoto) await store.borrarFoto(id); } catch (e) { /* ignorar */ } } };
+      // Foto del comprobante: obligatoria. Si no se puede guardar, el gasto no se guarda.
       if (cap.foto) {
+        let ok = false, motivo = MSG_FOTO;
         try {
           const url = await comprimir(cap.foto, 1280, 0.6);
           const r = await store.guardarFoto(g.id, url);
-          if (r && r.ok) { g.comprobante.fotoId = g.id; if (fotoArchivo === cap.foto) fotoArchivo = null; }
-          else aviso('advertencia', 'No se pudo guardar la foto: ' + String((r && r.error) || '') + ' El gasto se guardará sin foto.', 'foto');
-        } catch (e) { aviso('advertencia', MSG_FOTO, 'foto'); }
+          if (r && r.ok) { g.comprobante.fotoId = g.id; guardadas.push(g.id); ok = true; }
+          else motivo = 'No se pudo guardar la foto del comprobante: ' + String((r && r.error) || '') + '.';
+        } catch (e) { /* motivo por defecto */ }
+        if (!ok) { aviso('error', motivo + ' El gasto no se guardó: la foto del comprobante es obligatoria. Inténtalo de nuevo.', 'foto'); return; }
+      }
+      // Foto del producto o servicio: obligatoria solo si las políticas lo piden; si no, se guarda el gasto sin ella.
+      if (cap.fotoExtra) {
+        let ok = false, motivo = MSG_FOTO_EXTRA;
+        try {
+          const url = await comprimir(cap.fotoExtra, 1280, 0.6);
+          const r = await store.guardarFoto(g.id + '-x', url);
+          if (r && r.ok) { g.comprobante.fotoExtraId = g.id + '-x'; guardadas.push(g.id + '-x'); ok = true; }
+          else motivo = 'No se pudo guardar la foto del producto o servicio: ' + String((r && r.error) || '') + '.';
+        } catch (e) { /* motivo por defecto */ }
+        if (!ok) {
+          if (cap.exigida) { await soltar(); aviso('error', motivo + ' El gasto no se guardó: la foto es obligatoria. Inténtalo de nuevo.', 'foto-extra'); return; }
+          aviso('advertencia', motivo + ' El gasto se guardará sin esa foto.', 'foto-extra');
+        }
       }
       let r = cap.editando ? estado.rendiciones.find((x) => x.id === cap.editando.rendicionId) : borradorActual();
-      if (cap.editando && (!r || r.estado !== R.ESTADOS.BORRADOR)) { aviso('error', 'Este gasto pertenece a una rendición ya enviada y no se puede editar.', 'form'); return; }
+      if (cap.editando && (!r || r.estado !== R.ESTADOS.BORRADOR)) { await soltar(); aviso('error', 'Este gasto pertenece a una rendición ya enviada y no se puede editar.', 'form'); return; }
       if (!r) { r = R.nueva({ encargado: perfil.nombre, tienda: perfil.tienda }, estado.rendiciones, ahoraIso()); estado.rendiciones.push(r); }
       g.rendicionId = r.id;
       const i = estado.gastos.findIndex((x) => x.id === g.id);
@@ -12066,10 +12214,10 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       if (!r.gastoIds.includes(g.id)) r.gastoIds.push(g.id);
       r.modificadoEn = ahoraIso();
       editando = g;   // si falla el guardado, un nuevo intento actualiza este mismo gasto
-      if (await persistir()) { editando = null; aviso('ok', 'Gasto guardado.', 'ok'); mostrarVista('inicio'); }
+      if (await persistir()) { editando = null; fotoArchivo = null; fotoExtraArchivo = null; aviso('ok', 'Gasto guardado.', 'ok'); mostrarVista('inicio'); }
     }
 
-    bCancelar.addEventListener('click', () => { fotoArchivo = null; editando = null; soltarPrevia(); quitarAviso('form'); mostrarVista('inicio'); });
+    bCancelar.addEventListener('click', () => { fotoArchivo = null; fotoExtraArchivo = null; editando = null; soltarPrevia(); soltarPreviaExtra(); quitarAviso('form'); mostrarVista('inicio'); });
     bBorrar.addEventListener('click', () => {
       const g = editando;
       if (!g) return;
@@ -12078,6 +12226,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
         for (const r of estado.rendiciones) r.gastoIds = r.gastoIds.filter((id) => id !== g.id);
         if (await persistir()) {
           if (g.comprobante.fotoId && store.borrarFoto) await store.borrarFoto(g.comprobante.fotoId);
+          if (g.comprobante.fotoExtraId && store.borrarFoto) await store.borrarFoto(g.comprobante.fotoExtraId);
           editando = null; mostrarVista('inicio');
         }
       }) });
@@ -12088,9 +12237,10 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     async function armarArchivo(r) {
       const gastos = R.gastosDe(r, estado.gastos), fotos = {};
       for (const g of gastos) {
-        const id = g.comprobante && g.comprobante.fotoId;
-        if (!id || !store.leerFoto) continue;
-        try { const u = await store.leerFoto(id); if (u) fotos[id] = u; } catch (e) { /* esa foto se omite */ }
+        for (const id of [g.comprobante && g.comprobante.fotoId, g.comprobante && g.comprobante.fotoExtraId]) {
+          if (!id || !store.leerFoto) continue;
+          try { const u = await store.leerFoto(id); if (u) fotos[id] = u; } catch (e) { /* esa foto se omite */ }
+        }
       }
       return OC.share.exportarRendicion(r, gastos, fotos);
     }
@@ -12178,10 +12328,59 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       h('div', { class: 'acciones' }, h('button', { class: 'btn btn-primario btn-grande', type: 'submit', id: 'a-guardar', text: 'Guardar ajustes' })));
     $('#v-ajustes').appendChild(h('header', { class: 'vista-cab' }, h('h2', { text: 'Ajustes' })));
     $('#v-ajustes').appendChild(formAjustes);
+
+    // ---------- políticas de la empresa (se importan desde un archivo que manda administración) ----------
+    const aPolVersion = h('p', { id: 'a-pol-version', class: 'muted' }), aPolFoto = h('p', { id: 'a-pol-foto', class: 'muted' });
+    const aPolLista = h('div', { id: 'a-pol-lista' });
+    const aPolArchivo = h('input', { id: 'a-pol-archivo', type: 'file', accept: '.json,application/json', class: 'solo-lector' });
+    $('#v-ajustes').appendChild(h('section', { class: 'tarjeta', 'aria-labelledby': 'a-pol-t' },
+      h('h3', { id: 'a-pol-t', text: 'Políticas de la empresa' }), aPolVersion, aPolFoto, aPolLista,
+      h('label', { class: 'btn', for: 'a-pol-archivo' }, 'Importar políticas', aPolArchivo),
+      h('p', { class: 'muted', text: 'Administración te manda el archivo por WhatsApp (politicas-ovocenter.json). Ábrelo desde aquí para actualizarlas.' })));
+    function pintarPoliticas() {
+      const p = politicas || OC.politicas.defaults();
+      aPolVersion.textContent = 'Versión ' + p.version + (politicas ? ' · actualizada el ' + p.actualizadaEn.slice(8, 10) + '/' + p.actualizadaEn.slice(5, 7) + '/' + p.actualizadaEn.slice(0, 4) : ' · valores de fábrica');
+      aPolFoto.textContent = 'Foto del producto o servicio en cada gasto: ' + (OC.politicas.exigeFotoAdicional(politicas) ? 'obligatoria.' : 'opcional.');
+      vaciar(aPolLista);
+      for (const it of p.items) aPolLista.appendChild(h('div', { class: 'pol-item', 'data-id': it.id }, h('h3', { text: it.titulo }), h('p', { class: 'pol-texto', text: it.texto })));
+      pintarExtraNota();
+    }
+    function leerTexto(f) {
+      return new Promise((res, rej) => {
+        try { const fr = new win.FileReader(); fr.onload = () => res(String(fr.result || '')); fr.onerror = () => rej(fr.error || new Error('lectura')); fr.readAsText(f); } catch (e) { rej(e); }
+      });
+    }
+    function aplicarPoliticas(datos) {
+      if (store.setAjuste('politicas', datos) === false) { aviso('error', 'No se pudieron guardar las políticas en este celular.', 'politicas'); return; }
+      politicas = datos;
+      pintarPoliticas();
+      aviso('ok', 'Políticas actualizadas (versión ' + datos.version + ').', 'politicas');
+    }
+    aPolArchivo.addEventListener('change', () => {
+      const f = aPolArchivo.files && aPolArchivo.files[0];
+      if (!f) return;
+      quitarAviso('politicas');
+      encolar(async () => {
+        if (f.size > 512 * 1024) { aviso('error', 'El archivo es demasiado grande para ser de políticas.', 'politicas'); return; }
+        let txt;
+        try { txt = await leerTexto(f); } catch (e) { aviso('error', 'No se pudo leer el archivo.', 'politicas'); return; }
+        try { aPolArchivo.value = ''; } catch (e) { /* ignorar */ }
+        const r = OC.share.leerPoliticas(txt);
+        if (!r.ok) { aviso('error', r.error, 'politicas'); return; }
+        const actual = politicas ? politicas.version : 0;
+        if (r.datos.version === actual) { aviso('info', 'Ya tienes esta versión de las políticas (' + actual + ').', 'politicas'); return; }
+        if (r.datos.version < actual) {
+          modal({ titulo: 'Versión anterior', cuerpo: ['Este archivo es la versión ' + r.datos.version + ' y ya tienes la ' + actual + '. ¿Quieres usar la anterior?'], confirmar: 'Usar la anterior', onConfirmar: () => aplicarPoliticas(r.datos) });
+          return;
+        }
+        aplicarPoliticas(r.datos);
+      });
+    });
     function pintarAjustes() {
       if (!perfil) return;
       llenar(aTienda, estado.catalogos.tiendas, '— Elige tu tienda —');
       aNombre.value = perfil.nombre; aTienda.value = perfil.tienda;
+      pintarPoliticas();
     }
     formAjustes.addEventListener('submit', (ev) => {
       ev.preventDefault();
@@ -12202,6 +12401,8 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     estado = { gastos: c.gastos, catalogos: c.catalogos, rendiciones: c.rendiciones || [] };
     if (c.errorLectura) aviso('error', c.errorLectura, 'lectura');
     llenar(pTienda, estado.catalogos.tiendas, '— Elige tu tienda —');
+    { const g = store.getAjuste('politicas'); const v = g ? OC.share.leerPoliticas(OC.share.exportarPoliticas(g)) : null; politicas = v && v.ok ? v.datos : null; }
+    pintarPoliticas();
     mostrarVista(perfil ? 'inicio' : 'perfil');
 
     return {

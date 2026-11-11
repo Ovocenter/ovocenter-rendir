@@ -1,7 +1,7 @@
 /* Service worker de la app del encargado (solo en la versión publicada con https).
    Red primero: si hay internet se usa siempre la versión nueva y se guarda una copia;
    sin internet se abre la copia guardada. build.js pone en CACHE un hash del index.html, así cada versión nueva usa su propia copia. */
-const CACHE = 'ovocenter-rendir-50450d89be';
+const CACHE = 'ovocenter-rendir-c7776fb222';
 const ARCHIVOS = ['./', 'index.html', 'manifest.webmanifest', 'icono-180.png', 'icono-192.png', 'icono-512.png'];
 
 self.addEventListener('install', (ev) => {
